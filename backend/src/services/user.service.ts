@@ -1,223 +1,207 @@
-import { UserRepository } from '../repositories/user.repository';
-import { hashPassword, comparePassword } from '../utils/password.util';
-import { ConflictError, NotFoundError, ValidationError } from '../utils/error.util';
-import { logger } from '../utils/logger.util';
-import type { User, UserRole } from '../types/user.types';
+import { UserService } from '../../../src/services/user.service';
+import { UserRepository } from '../../../src/repositories/user.repository';
+import { CreateUserDTO, UpdateUserDTO } from '../../../src/types';
+import { NotFoundError, ValidationError } from '../../../src/utils/error.util';
 
-/**
- * User Service
- * 
- * Business logic for user management
- */
+// Mock the repository
+jest.mock('../../../src/repositories/user.repository');
+jest.mock('../../../src/utils/password.util');
 
-export class UserService {
-  /**
-   * Get user by ID
-   */
-  static async getUserById(userId: string): Promise<Omit<User, 'password'>> {
-    const user = await UserRepository.findById(userId);
-    
-    if (!user) {
-      throw new NotFoundError('User not found');
-    }
+describe('UserService', () => {
+  let userService: UserService;
+  let mockUserRepo: jest.Mocked<UserRepository>;
 
-    const { password, ...userWithoutPassword } = user;
-    return userWithoutPassword;
-  }
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockUserRepo = new UserRepository() as jest.Mocked<UserRepository>;
+    userService = new UserService();
+    (userService as any).userRepo = mockUserRepo;
+  });
 
-  /**
-   * Get all users with optional filters
-   */
-  static async getAllUsers(filters?: {
-    role?: UserRole;
-    is_active?: boolean;
-    search?: string;
-  }): Promise<Omit<User, 'password'>[]> {
-    const users = await UserRepository.findAll(filters);
-    
-    // Remove passwords from all users
-    return users.map(({ password, ...user }) => user);
-  }
+  describe('getAllUsers', () => {
+    it('should return all users', async () => {
+      const mockUsers = [
+        {
+          id: '1',
+          name: 'Test User',
+          email: 'test@example.com',
+          phone: '1234567890',
+          role: 'staff' as const,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ];
 
-  /**
-   * Get all staff members
-   */
-  static async getAllStaff(): Promise<Pick<User, 'id' | 'name' | 'email' | 'phone' | 'role'>[]> {
-    return await UserRepository.findAllStaff();
-  }
+      mockUserRepo.findAll.mockResolvedValue(mockUsers);
 
-  /**
-   * Create new user
-   */
-  static async createUser(userData: {
-    name: string;
-    email: string;
-    phone: string;
-    password: string;
-    role: UserRole;
-  }): Promise<Omit<User, 'password'>> {
-    // Check if email already exists
-    const emailExists = await UserRepository.emailExists(userData.email);
-    if (emailExists) {
-      throw new ConflictError('Email already in use');
-    }
+      const result = await userService.getAllUsers();
 
-    // Check if phone already exists
-    const phoneExists = await UserRepository.phoneExists(userData.phone);
-    if (phoneExists) {
-      throw new ConflictError('Phone number already in use');
-    }
+      expect(result).toEqual(mockUsers);
+      expect(mockUserRepo.findAll).toHaveBeenCalledTimes(1);
+    });
+  });
 
-    // Hash password
-    const hashedPassword = await hashPassword(userData.password);
+  describe('getUserById', () => {
+    it('should return user when found', async () => {
+      const mockUser = {
+        id: '1',
+        name: 'Test User',
+        email: 'test@example.com',
+        phone: '1234567890',
+        role: 'staff' as const,
+        password_hash: 'hashed',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
 
-    // Create user
-    const user = await UserRepository.create({
-      ...userData,
-      password: hashedPassword
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+
+      const result = await userService.getUserById('1');
+
+      expect(result).toEqual({
+        id: '1',
+        name: 'Test User',
+        email: 'test@example.com',
+        phone: '1234567890',
+        role: 'staff',
+        created_at: mockUser.created_at,
+        updated_at: mockUser.updated_at,
+      });
     });
 
-    const { password, ...userWithoutPassword } = user;
-    logger.info(`New user created: ${user.email}`);
-    
-    return userWithoutPassword;
-  }
+    it('should throw NotFoundError when user not found', async () => {
+      mockUserRepo.findById.mockResolvedValue(null);
 
-  /**
-   * Update user profile
-   */
-  static async updateUser(
-    userId: string,
-    updates: {
-      name?: string;
-      email?: string;
-      phone?: string;
-      role?: UserRole;
-      is_active?: boolean;
-    }
-  ): Promise<Omit<User, 'password'>> {
-    // Check if user exists
-    const existingUser = await UserRepository.findById(userId);
-    if (!existingUser) {
-      throw new NotFoundError('User not found');
-    }
+      await expect(userService.getUserById('999')).rejects.toThrow(NotFoundError);
+    });
+  });
 
-    // If email is being updated, check if new email is available
-    if (updates.email && updates.email !== existingUser.email) {
-      const emailExists = await UserRepository.emailExists(updates.email, userId);
-      if (emailExists) {
-        throw new ConflictError('Email already in use');
-      }
-    }
+  describe('createUser', () => {
+    it('should create user successfully', async () => {
+      const createUserDTO: CreateUserDTO = {
+        name: 'New User',
+        email: 'new@example.com',
+        phone: '9876543210',
+        role: 'staff',
+        password: 'password123',
+      };
 
-    // If phone is being updated, check if new phone is available
-    if (updates.phone && updates.phone !== existingUser.phone) {
-      const phoneExists = await UserRepository.phoneExists(updates.phone, userId);
-      if (phoneExists) {
-        throw new ConflictError('Phone number already in use');
-      }
-    }
+      const mockCreatedUser = {
+        id: '2',
+        name: 'New User',
+        email: 'new@example.com',
+        phone: '9876543210',
+        role: 'staff' as const,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
 
-    // Update user
-    const updatedUser = await UserRepository.update(userId, updates);
-    
-    const { password, ...userWithoutPassword } = updatedUser;
-    logger.info(`User updated: ${updatedUser.email}`);
-    
-    return userWithoutPassword;
-  }
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue(mockCreatedUser);
 
-  /**
-   * Change user password
-   */
-  static async changePassword(
-    userId: string,
-    oldPassword: string,
-    newPassword: string
-  ): Promise<void> {
-    // Get user
-    const user = await UserRepository.findById(userId);
-    if (!user) {
-      throw new NotFoundError('User not found');
-    }
+      const result = await userService.createUser(createUserDTO);
 
-    // Verify old password
-    const isOldPasswordValid = await comparePassword(oldPassword, user.password);
-    if (!isOldPasswordValid) {
-      throw new ValidationError('Current password is incorrect');
-    }
+      expect(result).toEqual(mockCreatedUser);
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('new@example.com');
+      expect(mockUserRepo.create).toHaveBeenCalled();
+    });
 
-    // Validate new password (minimum 6 characters)
-    if (newPassword.length < 6) {
-      throw new ValidationError('New password must be at least 6 characters');
-    }
+    it('should throw ValidationError when email already exists', async () => {
+      const createUserDTO: CreateUserDTO = {
+        name: 'New User',
+        email: 'existing@example.com',
+        phone: '9876543210',
+        role: 'staff',
+        password: 'password123',
+      };
 
-    // Hash new password
-    const hashedNewPassword = await hashPassword(newPassword);
+      mockUserRepo.findByEmail.mockResolvedValue({
+        id: '1',
+        name: 'Existing User',
+        email: 'existing@example.com',
+        phone: '1234567890',
+        role: 'staff',
+        password_hash: 'hashed',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
 
-    // Update password
-    await UserRepository.updatePassword(userId, hashedNewPassword);
-    
-    logger.info(`Password changed for user: ${user.email}`);
-  }
+      await expect(userService.createUser(createUserDTO)).rejects.toThrow(
+        ValidationError
+      );
+    });
+  });
 
-  /**
-   * Deactivate user account
-   */
-  static async deactivateUser(userId: string): Promise<void> {
-    const user = await UserRepository.findById(userId);
-    if (!user) {
-      throw new NotFoundError('User not found');
-    }
+  describe('updateUser', () => {
+    it('should update user successfully', async () => {
+      const updateDTO: UpdateUserDTO = {
+        name: 'Updated Name',
+      };
 
-    await UserRepository.softDelete(userId);
-    logger.info(`User deactivated: ${user.email}`);
-  }
+      const existingUser = {
+        id: '1',
+        name: 'Old Name',
+        email: 'test@example.com',
+        phone: '1234567890',
+        role: 'staff' as const,
+        password_hash: 'hashed',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
 
-  /**
-   * Activate user account
-   */
-  static async activateUser(userId: string): Promise<void> {
-    const user = await UserRepository.findById(userId);
-    if (!user) {
-      throw new NotFoundError('User not found');
-    }
+      const updatedUser = {
+        id: '1',
+        name: 'Updated Name',
+        email: 'test@example.com',
+        phone: '1234567890',
+        role: 'staff' as const,
+        created_at: existingUser.created_at,
+        updated_at: new Date().toISOString(),
+      };
 
-    await UserRepository.update(userId, { is_active: true });
-    logger.info(`User activated: ${user.email}`);
-  }
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+      mockUserRepo.update.mockResolvedValue(updatedUser);
 
-  /**
-   * Delete user permanently (admin only)
-   */
-  static async deleteUser(userId: string): Promise<void> {
-    const user = await UserRepository.findById(userId);
-    if (!user) {
-      throw new NotFoundError('User not found');
-    }
+      const result = await userService.updateUser('1', updateDTO);
 
-    await UserRepository.hardDelete(userId);
-    logger.warn(`User permanently deleted: ${user.email}`);
-  }
+      expect(result.name).toBe('Updated Name');
+      expect(mockUserRepo.update).toHaveBeenCalledWith('1', updateDTO);
+    });
 
-  /**
-   * Get user statistics
-   */
-  static async getUserStats(): Promise<{
-    total: number;
-    active: number;
-    inactive: number;
-    admins: number;
-    staff: number;
-  }> {
-    const allUsers = await UserRepository.findAll();
-    
-    return {
-      total: allUsers.length,
-      active: allUsers.filter(u => u.is_active).length,
-      inactive: allUsers.filter(u => !u.is_active).length,
-      admins: allUsers.filter(u => u.role === 'admin').length,
-      staff: allUsers.filter(u => u.role === 'staff').length
-    };
-  }
-}
+    it('should throw NotFoundError when user not found', async () => {
+      mockUserRepo.findById.mockResolvedValue(null);
+
+      await expect(userService.updateUser('999', { name: 'Test' })).rejects.toThrow(
+        NotFoundError
+      );
+    });
+  });
+
+  describe('deleteUser', () => {
+    it('should delete user successfully', async () => {
+      const mockUser = {
+        id: '1',
+        name: 'Test User',
+        email: 'test@example.com',
+        phone: '1234567890',
+        role: 'staff' as const,
+        password_hash: 'hashed',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+      mockUserRepo.delete.mockResolvedValue(undefined);
+
+      await userService.deleteUser('1');
+
+      expect(mockUserRepo.delete).toHaveBeenCalledWith('1');
+    });
+
+    it('should throw NotFoundError when user not found', async () => {
+      mockUserRepo.findById.mockResolvedValue(null);
+
+      await expect(userService.deleteUser('999')).rejects.toThrow(NotFoundError);
+    });
+  });
+});
